@@ -1,4 +1,4 @@
-
+/* Copied and Modified from opensource project https://github.com/lihongxun945/gobang */
 var Board = function(container, status) {
   this.container = container;
   this.status = status;

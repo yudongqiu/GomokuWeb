@@ -1,6 +1,9 @@
+/* Copied and Modified from opensource project https://github.com/lihongxun945/gobang */
+
 html {
   font-size: 10px;
 }
+
 * {
   -webkit-touch-callout: none;
   -webkit-user-select: none;
@@ -10,6 +13,7 @@ html {
   user-select: none;
   -webkit-tap-highlight-color: rgba(0, 0, 0, 0);
 }
+
 @media (min-width: 370px) {
   html {
     font-size: 11px;
@@ -95,4 +99,7 @@ footer {
 
 input {
   width: 50px;
+  user-select: auto;
+  -webkit-user-select: auto;
 }
+
