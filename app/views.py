@@ -28,9 +28,7 @@ def player_set():
     position = request.args.get('position','')
     stone = tuple(int(i) for i in position.split(','))
     action = (stone[0]+1, stone[1]+1) # we start from 1 in the game engine
-    print stone
     next_action, winner = game.web_play(action)
-    print next_action
     if isinstance(next_action, tuple):
         stone = (next_action[0]-1, next_action[1]-1)
     else:

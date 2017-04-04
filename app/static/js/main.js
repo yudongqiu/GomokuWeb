@@ -30,21 +30,16 @@ var Board = function(container, status) {
 
 Board.prototype.start = function() {
   if(this.started) return;
+  this.p1 = $('input[name="BlackPlayer"]').val()
+  this.p2 = $('input[name="WhitePlayer"]').val()
+  this.level = $('input[name="AI_Level"]').val()
   this.initBoard();
   this.init_server();
-
-
-  //this.board[7][7] = 2;
-  //this.steps.push([7, 7]);
-
   this.draw();
-
   this.setStatus("Game Started!");
-
   this.started = true;
   this.playing = 2;
-
-  if($('input[name="BlackPlayer"]').val() == 'AI') {
+  if(this.p1.startsWith('AI')) {
     this.set(7, 7, 2)
   }
 }
@@ -152,9 +147,9 @@ Board.prototype.set_server = function(x,y) {
 
 Board.prototype.init_server = function() {
   $.getJSON($SCRIPT_ROOT + '/_start', {
-    p1: $('input[name="BlackPlayer"]').val(),
-    p2: $('input[name="WhitePlayer"]').val(),
-    lv: $('input[name="AI_Level"]').val(),
+    p1: this.p1,
+    p2: this.p2,
+    lv: this.level,
   }, function(data){});
 };
 
