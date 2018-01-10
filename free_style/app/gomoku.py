@@ -9,6 +9,7 @@ from __future__ import print_function, division
 import os, sys, time, collections
 from functools import update_wrapper
 import pickle
+import copy
 
 def decorator(d):
     "Make function d a decorator: d wraps a function fn."
@@ -70,7 +71,7 @@ class Gomoku(object):
 
     @property
     def state(self):
-        return (self.board, self.last_move, self.playing, self.board_size)
+        return copy.copy((self.board, self.last_move, self.playing, self.board_size))
 
     def load_state(self, state):
         (self.board, self.last_move, self.playing, self.board_size) = state
@@ -149,7 +150,7 @@ class Gomoku(object):
                 print("This is the first move, please put it on the center (%s%s)!"% (str(center),chr(center+96)))
                 return False
         elif self.last_move in taken_pos:
-            print("This position is already taken!")
+            print("This position (%d,%d) is already taken!" % self.last_move)
             return False
         self.board[self.playing].add(self.last_move)
         return True

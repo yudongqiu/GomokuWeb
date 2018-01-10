@@ -3,7 +3,7 @@
 from __future__ import print_function, division
 import itertools, time, copy
 import collections, random
-import os, pickle
+import os, sys, pickle
 import numba
 import numpy as np
 
@@ -25,56 +25,99 @@ def strategy(state):
 
     global board_size
     board, last_move, playing, board_size = state
+    strategy.playing = playing
     initialize()
 
-    print('estimate_level', estimate_level)
     other_player = int(not playing)
     my_stones = board[playing]
     opponent_stones = board[other_player]
 
-
-    # put the first stone in the center if it's the start of the game
-    center = int((board_size-1)/2)
-
-
-
     if last_move is None: # if it's the first move of the game
+        # put the first stone in the center if it's the start of the game
+        center = int((board_size-1)/2)
         best_move = (center, center)
+        assert playing == 0
+        strategy.started_from_beginning = True
         strategy.zobrist_code = strategy.zobrist_me[best_move]
+        strategy.hist_states = [strategy.zobrist_code]
+        if strategy.zobrist_code not in strategy.cachehigh:
+            strategy.cachehigh[strategy.zobrist_code] = 0.5
         return (best_move[0]+1, best_move[1]+1)
-    else:
-        last_move = (last_move[0]-1, last_move[1]-1)
-        # update zobrist_code with opponent last move
-        strategy.zobrist_code ^= strategy.zobrist_opponent[last_move]
+    elif len(my_stones) == 0:
+        assert playing == 1
+        strategy.started_from_beginning = True
+        strategy.zobrist_code = 0
+        strategy.hist_states = []
+    elif len(my_stones) == 1 and len(opponent_stones) == 1:
+        assert playing == 0
+        if not hasattr(strategy, 'started_from_beginning') or strategy.started_from_beginning == False:
+            strategy.started_from_beginning = True
+            my_first_move = list(my_stones)[0]
+            strategy.zobrist_code = strategy.zobrist_me[my_first_move[0]-1, my_first_move[1]-1]
+            strategy.hist_states = [strategy.zobrist_code]
+            if strategy.zobrist_code not in strategy.cachehigh:
+                strategy.cachehigh[strategy.zobrist_code] = 0.5
 
-        # build new state representation
-        state = np.zeros(board_size**2, dtype=np.int32).reshape(board_size, board_size)
-        for i,j in my_stones:
-            state[i-1,j-1] = 1
-        for i,j in opponent_stones:
-            state[i-1,j-1] = -1
+    last_move = (last_move[0]-1, last_move[1]-1)
+    # update zobrist_code with opponent last move
+    strategy.zobrist_code ^= strategy.zobrist_opponent[last_move]
 
-        if strategy.zobrist_code in U_stone.cache:
-            print("Calculated Move: %.3f" %U_stone.cache[strategy.zobrist_code])
-        else:
-            print("Didn't know this move!")
+    # build new state representation
+    state = np.zeros(board_size**2, dtype=np.int32).reshape(board_size, board_size)
+    for i,j in my_stones:
+        state[i-1,j-1] = 1
+    for i,j in opponent_stones:
+        state[i-1,j-1] = -1
 
-        if len(my_stones) == 0:
-            level = 8
-        else:
-            level = 0
+    # clear the U cache
+    U_stone.cache = dict()
 
-        # clear the U cache
-        U_stone.cache = dict()
-
-        alpha = -1.0
-        beta = 2.0
-        empty_spots_left = np.sum(state==0)
-        best_move, best_q = best_action_q(state, strategy.zobrist_code, empty_spots_left, last_move, alpha, beta, 1, level)
-
+    alpha = -1.0
+    beta = 2.0
+    empty_spots_left = np.sum(state==0)
+    best_move, best_q = best_action_q(state, strategy.zobrist_code, empty_spots_left, last_move, alpha, beta, 1, 0)
 
     # update zobrist_code with my move
     strategy.zobrist_code ^= strategy.zobrist_me[best_move]
+    # store the win rate of this move
+    if strategy.zobrist_code not in strategy.cachehigh:
+        strategy.cachehigh[strategy.zobrist_code] = best_q
+
+    state[best_move] = 1
+
+    game_finished = False
+    new_u = 0
+    if i_win(state, best_move, 1):
+        new_u = 1.0
+        game_finished = True
+    elif i_lost(state, 1):
+        new_u = 0.0
+        game_finished = True
+    elif empty_spots_left <= 2:
+        new_u = 0.5
+        game_finished = True
+
+    if game_finished and strategy.started_from_beginning is True:
+        print("best_q = %f"%best_q)
+        discount = 1.0
+        for prev_state_zobrist_code in strategy.hist_states[::-1]:
+            if prev_state_zobrist_code in strategy.n_visited:
+                n_visited = strategy.n_visited[prev_state_zobrist_code]
+                n_visited += 1
+            else:
+                n_visited = 1
+            u = strategy.cachehigh[prev_state_zobrist_code]
+            new_u = u + discount * (new_u - u) /    (n_visited+1) # this is the learning rate
+            strategy.cachehigh[prev_state_zobrist_code] = new_u
+            strategy.n_visited[prev_state_zobrist_code] = n_visited
+            print("Updated U of %d from %f to %f"%(prev_state_zobrist_code, u, new_u))
+            #discount *= discount_factor
+        print("Updated win rate of %d states" % len(strategy.hist_states))
+        strategy.started_from_beginning = False # we only update once
+        finish()
+    elif empty_spots_left > 100:
+        # record the history states
+        strategy.hist_states.append(strategy.zobrist_code)
     # return the best move
     return (best_move[0]+1, best_move[1]+1)
 
@@ -86,55 +129,51 @@ def best_action_q(state, zobrist_code, empty_spots_left, last_move, alpha, beta,
 
     if empty_spots_left == 0: # Board filled up, it's a tie
         return None, 0.5
-    #move_interest_values = np.zeros(board_size**2, dtype=np.float32).reshape(board_size,board_size)
-    move_interest_values = best_action_q.move_interest_values
-    move_interest_values.fill(0) # reuse the same array
-    # boost the interests of closer moves by a little bit
-    # note that it might boost a taken spot, but an available spot will at least get 10 interest in find_interesting_moves()
-    boost_dist = 3
-    r, c = last_move
-    xmin = max(0, r-boost_dist)
-    xmax = min(board_size, r+boost_dist+1)
-    ymin = max(0, c-boost_dist)
-    ymax = min(board_size, c+boost_dist+1)
-    move_interest_values[xmin:xmax, ymin:ymax] = 1.5
 
-    verbose = False
-    if level == 0:
-        verbose = True
-
+    verbose = True if level == 0 else False
+    #verbose = False
     n_moves = level_max_n[level]
-    interested_moves = find_interesting_moves(state, empty_spots_left, move_interest_values, player, n_moves, verbose)
+    interested_moves = find_interesting_moves(state, last_move, player, n_moves, verbose)
 
     if len(interested_moves) == 1:
-        current_move = interested_moves[0]
-        current_move = (current_move[0], current_move[1])
-        if level == 0 and player == 1:
-            return current_move, 0.5
+        current_move = interested_moves.pop()
         q = Q_stone(state, zobrist_code, empty_spots_left, current_move, alpha, beta, player, level)
         return current_move, q
 
     #best_move = (-1,-1) # admit defeat if all moves have 0 win rate
-    best_move = (interested_moves[0,0], interested_moves[0,1]) # continue to play even I'm losing
+    best_move = interested_moves[0] # continue to play even I'm losing
 
     if player == 1:
         max_q = 0.0
+        max_bonused = False
+        bonus_q = 0.1
         for current_move in interested_moves:
-            current_move = (current_move[0], current_move[1])
             q = Q_stone(state, zobrist_code, empty_spots_left, current_move, alpha, beta, player, level+1)
             if q > alpha: alpha = q
-            if q > max_q:
-                max_q = q
-                best_move = current_move
-                if verbose:
-                    print(current_move, q)
-            if q == 1.0 or beta <= alpha:
+            if level == 0:
+                next_zobrist_code = zobrist_code ^ strategy.zobrist_me[current_move]
+                if next_zobrist_code not in strategy.n_visited or strategy.n_visited[next_zobrist_code] < 5:
+                    if q + bonus_q > max_q:
+                        max_q = q + bonus_q
+                        best_move = current_move
+                        max_bonused = True
+                elif q > max_q:
+                    max_q = q
+                    best_move = current_move
+                    max_bonused = False
+            else:
+                if q > max_q:
+                    max_q = q
+                    best_move = current_move
+            if max_q >= 1.0 or beta <= alpha:
                 break
-        best_q = max_q
+        if max_bonused:
+            best_q = max_q - bonus_q
+        else:
+            best_q = max_q
     elif player == -1:
         min_q = 1.0
         for current_move in interested_moves:
-            current_move = (current_move[0], current_move[1])
             q = Q_stone(state, zobrist_code, empty_spots_left, current_move, alpha, beta, player, level+1)
             if q < beta: beta = q
             if q < min_q:
@@ -146,33 +185,32 @@ def best_action_q(state, zobrist_code, empty_spots_left, last_move, alpha, beta,
     return best_move, best_q
 
 @numba.jit(nopython=True, nogil=True)
-def find_interesting_moves(state, empty_spots_left, move_interest_values, player, n_moves, verbose=False):
+def find_interesting_moves(state, last_move, player, n_moves, verbose=False):
     """ Look at state and find the interesing n_move moves.
     input:
     -------
     state: numpy.array board_size x board_size
-    empty_spots_left: number of empty spots on the board
+    last_move: opponent's last move
     player: 1 or -1, the current player
     n_moves: int, desired number of interesing moves
 
     output:
     -------
-    interested_moves: numpy.array final_n_moves x 2
-        *note : final_n_moves = 1 if limited
-        *       else final_n_moves = n_moves + number of length-4 moves
-        *note2: final_n_moves will not exceed empty_spots_left
-
-
-    #suggested_n_moves: suggested number of moves to
+    interested_moves: list of moves from highest interest to low
+        *note1: if limited, return a list of one move [(r,c)]
+        *note2: if a high interest move found (>256), n_move will += 1
     """
     force_to_block = False
     exist_will_win_move = False
     directions = ((1,1), (1,0), (0,1), (1,-1))
-    final_single_move = np.zeros(2, dtype=np.int64).reshape(1,2) # for returning the single move
+    n_moves_found = 0
+    interested_moves = []
+    move_interests = []
     for r in range(board_size):
         for c in range(board_size):
             if state[r,c] != 0: continue
-            interest_value = 10 # as long as it's a valid point, this is for avoiding the taken spaces
+            related_to_last_move = False
+            interest_value = 0
             my_hard_4 = 0
             for dr, dc in directions:
                 my_line_length = 1 # last_move
@@ -200,6 +238,8 @@ def find_interesting_moves(state, empty_spots_left, move_interest_values, player
                         else:
                             opponent_line_length += 1
                             my_blocked = True
+                            if ext_r == last_move[0] and ext_c == last_move[1]:
+                                related_to_last_move = True
                     elif skipped_1 is 0:
                         skipped_1 = i + 1 # allow one skip and record the position of the skip
                     else:
@@ -246,12 +286,7 @@ def find_interesting_moves(state, empty_spots_left, move_interest_values, player
                         break
                 # see if i'm winning
                 if my_line_length_back == 5:
-                    final_single_move[0,0] = r
-                    final_single_move[0,1] = c
-                    return final_single_move
-                    #interested_n_moves[0] = move
-                    #return interested_n_moves, True
-
+                    return [(r,c)]
                 # extend my forward line length to check if there is hard 4
                 if skipped_2 is 0:
                     my_line_length += my_line_length_back - my_line_length_no_skip
@@ -278,6 +313,8 @@ def find_interesting_moves(state, empty_spots_left, move_interest_values, player
                             break
                         elif state[ext_r, ext_c] == -player:
                             opponent_line_length_back += 1
+                            if ext_r == last_move[0] and ext_c == last_move[1]:
+                                related_to_last_move = True
                         elif skipped_2 is 0 and state[ext_r, ext_c] == 0:
                             skipped_2 = i + 1
                         else:
@@ -297,8 +334,7 @@ def find_interesting_moves(state, empty_spots_left, move_interest_values, player
 
                 # check if we have to block this
                 if opponent_line_length_back == 5:
-                    final_single_move[0,0] = r
-                    final_single_move[0,1] = c
+                    interested_moves = [(r,c)]
                     force_to_block = True
                 elif force_to_block is False:
                     # if I will win after this move, I won't consider other moves
@@ -307,8 +343,7 @@ def find_interesting_moves(state, empty_spots_left, move_interest_values, player
                     if backward_my_open is True and my_line_length_back == 4:
                         my_hard_4 += 1
                     if my_hard_4 >= 2:
-                        final_single_move[0,0] = r
-                        final_single_move[0,1] = c
+                        interested_moves = [(r,c)]
                         exist_will_win_move = True
                 if force_to_block is False and exist_will_win_move is False:
                     # compute the interest_value for other moves
@@ -320,32 +355,43 @@ def find_interesting_moves(state, empty_spots_left, move_interest_values, player
                         interest_value += opponent_line_length ** 4
                     if backward_opponent_open is True:
                         interest_value += opponent_line_length_back ** 4
-            # after looking at all directions, record the total interest_value of this move
-            move_interest_values[r, c] += interest_value
-            if interest_value > 256: # one (length_4) ** 4, highly interesting move
-                n_moves += 1
+            # after looking at all directions, put this move in orderred list interested_moves and move_interests
+            if force_to_block is False and exist_will_win_move is False:
+                if interest_value > 256 and related_to_last_move is True:
+                    n_moves += 1
+                if n_moves_found == 0:
+                    interested_moves.append((r,c))
+                    move_interests.append(interest_value)
+                    n_moves_found += 1
+                elif n_moves_found < n_moves:
+                    i = n_moves_found - 1
+                    while True:
+                        if interest_value < move_interests[i] or i < 0:
+                            break
+                        i -= 1
+                    interested_moves.insert(i+1, (r,c))
+                    move_interests.insert(i+1, interest_value)
+                    n_moves_found += 1
+                elif interest_value > move_interests[-1]:
+                    interested_moves.pop()
+                    move_interests.pop()
+                    i = n_moves_found - 1
+                    while True:
+                        if interest_value < move_interests[i] or i < 0:
+                            break
+                        i -= 1
+                    interested_moves.insert(i+1, (r,c))
+                    move_interests.insert(i+1, interest_value)
 
     # all moves have been investigated now see if we have to block first
-    if force_to_block is True or exist_will_win_move is True:
-        if verbose is True:
-            print(final_single_move[0,0], final_single_move[0,1], "Only One")
-        return final_single_move
-    else:
-        flattened_interest = move_interest_values.ravel()
-        # The interest value > 250 means at least one length_4 or three length_3 which make it highly interesting
-        #n_high_interest_moves = np.sum(flattened_interest > 266) # did it in the loop
-        if n_moves > empty_spots_left:
-            n_moves = empty_spots_left
-        high_interest_idx = np.argsort(flattened_interest)[-n_moves:][::-1]
-        interested_moves = np.empty(n_moves*2, dtype=np.int64).reshape(n_moves, 2)
-        interested_moves[:,0] = high_interest_idx // board_size
-        interested_moves[:,1] = high_interest_idx % board_size
-
-        if verbose is True:
+    if verbose is True:
+        if force_to_block is True or exist_will_win_move is True:
+            print(interested_moves[0][0],interested_moves[0][1] , "Only One")
+        else:
             print("There are", n_moves, "interested_moves")
             for i in range(n_moves):
-                print(interested_moves[i,0],interested_moves[i,1],'  :  ', flattened_interest[high_interest_idx[i]])
-        return interested_moves
+                print(interested_moves[i][0],interested_moves[i][1],'  :  ', move_interests[i])
+    return interested_moves
 
 
 def Q_stone(state, zobrist_code, empty_spots_left, current_move, alpha, beta, player, level):
@@ -365,9 +411,14 @@ def Q_stone(state, zobrist_code, empty_spots_left, current_move, alpha, beta, pl
 
 def U_stone(state, zobrist_code, empty_spots_left, last_move, alpha, beta, player, level):
     try:
+        return strategy.cachehigh[zobrist_code]
+    except:
+        pass
+    try:
         return U_stone.cache[zobrist_code]
     except:
         pass
+
 
     if i_will_win(state, last_move, player):
         return 1.0 if player == 1 else 0.0
@@ -376,8 +427,9 @@ def U_stone(state, zobrist_code, empty_spots_left, last_move, alpha, beta, playe
     else:
         best_move, best_q = best_action_q(state, zobrist_code, empty_spots_left, last_move, alpha, beta, -player, level)
         result = best_q
-
     U_stone.cache[zobrist_code] = result
+    #if level == 1 and empty_spots_left > 200: # encourage exploration
+        #result += (1.0-result) * np.random.random() * 0.4
     return result
 
 
@@ -527,6 +579,14 @@ def i_win(state, last_move, player):
     return False
 
 @numba.jit(nopython=True,nogil=True)
+def i_lost(state, player):
+    for r in range(board_size):
+        for c in range(board_size):
+            if state[r,c] == 0 and i_win(state, (r,c), -player):
+                return True
+    return False
+
+@numba.jit(nopython=True,nogil=True)
 def i_will_win(state, last_move, player):
     """ Return true if I will win next step if the opponent don't have 4-in-a-row.
     Winning Conditions:
@@ -603,26 +663,43 @@ def i_will_win(state, last_move, player):
     return False
 
 def initialize():
+    color = 'black' if strategy.playing == 0 else 'white'
+    color = os.path.join(sys.path[0],'app','AI',color)
     # initialize zobrist for u caching
     if not hasattr(strategy, 'zobrist_me'):
+        np.random.seed(19890328) # use the same random matrix for storing
         strategy.zobrist_me = np.random.randint(np.iinfo(np.int64).max, size=board_size**2).reshape(board_size,board_size)
-    #if not hasattr(strategy, 'zobrist_opponent'):
         strategy.zobrist_opponent = np.random.randint(np.iinfo(np.int64).max, size=board_size**2).reshape(board_size,board_size)
-    #if not hasattr(strategy, 'zobrist_code'):
-        strategy.zobrist_code = 0
-    if not hasattr(U_stone, 'cache'):
-        U_stone.cache = dict()
+        strategy.zobrist_code = np.random.randint(np.iinfo(np.int64).max)
+        # reset the random seed to random for other functions
+        np.random.seed()
+    if not hasattr(strategy, 'cachehigh'):
+        filename = color + '.cachehigh'
+        if os.path.exists(filename):
+            strategy.cachehigh = pickle.load(open(filename, 'rb'))
+            print("Successfully loaded %d previously computed win rates"%len(strategy.cachehigh))
+        else:
+            strategy.cachehigh = dict()
+    if not hasattr(strategy, 'n_visited'):
+        filename = color + '.n_visited'
+        if os.path.exists(filename):
+            strategy.n_visited = pickle.load(open(filename, 'rb'))
+            print("Successfully loaded %d previously computed n_visited"%len(strategy.n_visited))
+        else:
+            strategy.n_visited = dict()
     if not hasattr(best_action_q, 'move_interest_values'):
         best_action_q.move_interest_values = np.zeros(board_size**2, dtype=np.float32).reshape(board_size,board_size)
 
-
 def finish():
-    del strategy.zobrist_me
-    del strategy.zobrist_opponent
-    del strategy.zobrist_code
-    del U_stone.cache
-    del best_action_q.move_interest_values
-    return
+    color = 'black' if strategy.playing == 0 else 'white'
+    color = os.path.join(sys.path[0],'app','AI', color)
+    filename = color + '.cachehigh'
+    pickle.dump(strategy.cachehigh, open(filename, 'wb'))
+    print("Successfully saved %d U(s) to %s"%(len(strategy.cachehigh), filename))
+
+    filename = color + '.n_visited'
+    pickle.dump(strategy.n_visited, open(filename, 'wb'))
+    print("Successfully saved %d N(s) to %s"%(len(strategy.n_visited), filename))
 
 def board_show(stones):
     if isinstance(stones, np.ndarray):

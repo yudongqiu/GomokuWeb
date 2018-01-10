@@ -13,12 +13,10 @@ class Gomoku_Web(gomoku.Gomoku):
         self.reset()
         self.board_size = board_size
         self.fastmode = None
-        self.playing = None
         if players:
             self.players = [Player_Web(player_name) for player_name in players]
         else:
             self.players = []
-        self.last_move = None
         self.first_center = None
 
     def reset(self):
@@ -26,6 +24,8 @@ class Gomoku_Web(gomoku.Gomoku):
         self.i_turn = 0
         self.hist_moves = []
         self.winning_stones = set()
+        self.playing = None
+        self.last_move = None
 
     def web_play(self, action):
         """ Controling the game play by the web function call"""
@@ -46,9 +46,13 @@ class Gomoku_Web(gomoku.Gomoku):
         if self.i_turn == self.board_size ** 2:
             print("This game is a Draw!")
             return None, "Draw"
-
         next_action = self.check_next_ai()
         return next_action, winner
+
+    def ai_first_move(self):
+        assert self.i_turn == 0
+        action = self.check_next_ai()
+        return action
 
     def check_next_ai(self):
         """ check if the next move is AI """
@@ -61,14 +65,14 @@ class Gomoku_Web(gomoku.Gomoku):
 
     def undo(self):
         """ Undo opponent's last move and my last move """
-        if len(self.hist_moves) == 0: return
+        if len(self.hist_moves) < 2 : return
         opponent = int(not self.playing)
         opponent_last_move = self.hist_moves.pop()
         self.board[opponent].remove(opponent_last_move)
-        if len(self.hist_moves) == 0: return
         my_last_move = self.hist_moves.pop()
         self.board[self.playing].remove(my_last_move)
         print("Undo!")
+        self.i_turn -= 2
         self.print_board()
 
 
@@ -88,6 +92,7 @@ class Player(gomoku.Player):
             except:
                 pass
             self.is_ai = True
+            p.initialize()
             if level:
                 p.estimate_level = level
         else:

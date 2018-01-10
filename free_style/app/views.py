@@ -35,6 +35,16 @@ def player_set():
         stone = None
     return jsonify(next_move=stone, winner=winner)
 
+@app.route('/_get_first_move')
+def get_first_move():
+    next_action = game.ai_first_move()
+    if isinstance(next_action, tuple):
+        stone = (next_action[0]-1, next_action[1]-1)
+    else:
+        print("Error getting AI first move!")
+        stone = None
+    return jsonify(next_move=stone)
+
 @app.route('/_reset', methods=['GET'])
 def reset():
     game.reset()

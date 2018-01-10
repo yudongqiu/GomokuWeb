@@ -40,7 +40,8 @@ Board.prototype.start = function() {
   this.started = true;
   this.playing = 2;
   if(this.p1.startsWith('AI')) {
-    this.set(7, 7, 2)
+    //this.set(7, 7, 2)
+    this.server_first_move();
   }
 }
 
@@ -143,6 +144,19 @@ Board.prototype.set_server = function(x,y) {
     self.lock = false;
   });
 
+};
+
+// Get first move from server (AI)
+Board.prototype.server_first_move = function() {
+  this.lock = true;
+  var self = this;
+  $.getJSON($SCRIPT_ROOT + '/_get_first_move', {}, function(data) {
+    var ai_move = data.next_move;
+    if (ai_move !== null) {
+      self.set(ai_move[0], ai_move[1], self.playing);
+    }
+    self.lock = false;
+  });
 };
 
 Board.prototype.init_server = function() {
