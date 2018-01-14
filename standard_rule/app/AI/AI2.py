@@ -6,10 +6,9 @@ import collections, random
 import os, pickle
 import numba
 import numpy as np
-import tflearn
 
 board_size = 15
-estimate_level = 3
+estimate_level = 9
 def strategy(state):
     """ AI's strategy """
 
@@ -26,58 +25,67 @@ def strategy(state):
 
     global board_size
     board, last_move, playing, board_size = state
-    strategy.playing = playing
+    initialize()
 
+    print('estimate_level', estimate_level)
     other_player = int(not playing)
     my_stones = board[playing]
     opponent_stones = board[other_player]
 
-    if playing == 0: # if i'm black
-        strategy.zobrist_me = strategy.zobrist_black
-        strategy.zobrist_opponent = strategy.zobrist_white
-    else:
-        strategy.zobrist_me = strategy.zobrist_white
-        strategy.zobrist_opponent = strategy.zobrist_black
+
+    # put the first stone in the center if it's the start of the game
+    center = int((board_size-1)/2)
+
 
 
     if last_move is None: # if it's the first move of the game
-        best_move = (7,7)
-        assert playing == 0
-        strategy.hist_states = []
-        strategy.started_from_beginning = True
+        best_move = (center, center)
+        strategy.zobrist_code = strategy.zobrist_me[best_move]
         return (best_move[0]+1, best_move[1]+1)
     else:
-        if len(my_stones) == 0:
-            assert playing == 1
-            strategy.started_from_beginning = True
-            strategy.hist_states = []
+        last_move = (last_move[0]-1, last_move[1]-1)
+        # update zobrist_code with opponent last move
+        strategy.zobrist_code ^= strategy.zobrist_opponent[last_move]
+
+        # build new state representation
         state = np.zeros(board_size**2, dtype=np.int32).reshape(board_size, board_size)
-        strategy.zobrist_code = 0
         for i,j in my_stones:
             state[i-1,j-1] = 1
-            strategy.zobrist_code ^= strategy.zobrist_me[i-1, j-1]
         for i,j in opponent_stones:
             state[i-1,j-1] = -1
-            strategy.zobrist_code ^= strategy.zobrist_opponent[i-1, j-1]
+
+        if strategy.zobrist_code in U_stone.cache:
+            print("Calculated Move: %.3f" %U_stone.cache[strategy.zobrist_code])
+        else:
+            print("Didn't know this move!")
+
+        if len(my_stones) == 0:
+            level = 7
+        else:
+            level = 0
+
         # clear the U cache
         U_stone.cache = dict()
-        alpha = -2.0
+
+        alpha = -1.0
         beta = 2.0
         empty_spots_left = np.sum(state==0)
-        start_level = -1
-        best_move, best_q = best_action_q(state, strategy.zobrist_code, empty_spots_left, last_move, alpha, beta, 1, start_level)
-    if best_q != None:
-        print("best_q = %.2f" % best_q)
+        best_move, best_q = best_action_q(state, strategy.zobrist_code, empty_spots_left, last_move, alpha, beta, 1, level)
+
+
+    # update zobrist_code with my move
+    strategy.zobrist_code ^= strategy.zobrist_me[best_move]
     # return the best move
     return (best_move[0]+1, best_move[1]+1)
 
 
 
-level_max_n = [20, 20, 15, 15, 8, 8, 6, 6, 4, 4, 4, 4, 4, 4, 4]
+level_max_n = [20, 20, 12, 12, 8, 8, 6, 6, 4, 4, 4, 4, 4, 4, 4]
 def best_action_q(state, zobrist_code, empty_spots_left, last_move, alpha, beta, player, level):
     "Return the optimal action for a state"
+
     if empty_spots_left == 0: # Board filled up, it's a tie
-        return None, 0.0
+        return None, 0.5
     #move_interest_values = np.zeros(board_size**2, dtype=np.float32).reshape(board_size,board_size)
     move_interest_values = best_action_q.move_interest_values
     move_interest_values.fill(0) # reuse the same array
@@ -91,41 +99,35 @@ def best_action_q(state, zobrist_code, empty_spots_left, last_move, alpha, beta,
     ymax = min(board_size, c+boost_dist+1)
     move_interest_values[xmin:xmax, ymin:ymax] = 1.5
 
-    is_first_move = False
-    if level == -1:
-       is_first_move = True
-       level = 0
-
-    verbose = is_first_move#True
+    verbose = False
+    if level == 0:
+        verbose = True
 
     n_moves = level_max_n[level]
     interested_moves = find_interesting_moves(state, empty_spots_left, move_interest_values, player, n_moves, verbose)
 
-
-
     if len(interested_moves) == 1:
         current_move = interested_moves[0]
         current_move = (current_move[0], current_move[1])
-        if is_first_move:
-            q = None
-            #Q_stone(state, zobrist_code, empty_spots_left, current_move, alpha, beta, player, estimate_level)
-        else:
-            q = Q_stone(state, zobrist_code, empty_spots_left, current_move, alpha, beta, player, level)
+        q = Q_stone(state, zobrist_code, empty_spots_left, current_move, alpha, beta, player, level)
+        if verbose: print(current_move, q)
         return current_move, q
 
     #best_move = (-1,-1) # admit defeat if all moves have 0 win rate
     best_move = (interested_moves[0,0], interested_moves[0,1]) # continue to play even I'm losing
 
     if player == 1:
-        max_q = -1.0
+        max_q = 0.0
         for current_move in interested_moves:
-            current_move = (current_move[0], current_move[1]) # convert into tuple
+            current_move = (current_move[0], current_move[1])
             q = Q_stone(state, zobrist_code, empty_spots_left, current_move, alpha, beta, player, level+1)
             if q > alpha: alpha = q
             if q > max_q:
                 max_q = q
                 best_move = current_move
-            if max_q >= 1.0 or beta <= alpha:
+                if verbose:
+                    print(current_move, q)
+            if q == 1.0 or beta <= alpha:
                 break
         best_q = max_q
     elif player == -1:
@@ -137,128 +139,10 @@ def best_action_q(state, zobrist_code, empty_spots_left, last_move, alpha, beta,
             if q < min_q:
                 min_q = q
                 best_move = current_move
-            if q <= -1.0 or beta <= alpha:
+            if q == 0.0 or beta <= alpha:
                 break
         best_q = min_q
     return best_move, best_q
-
-def Q_stone(state, zobrist_code, empty_spots_left, current_move, alpha, beta, player, level):
-    # update the state
-    state[current_move] = player
-    # update the zobrist code for the new state
-    if player == 1:
-        move_code = strategy.zobrist_me[current_move]
-    else:
-        move_code = strategy.zobrist_opponent[current_move]
-    new_zobrist_code = zobrist_code ^ move_code
-
-    result = U_stone(state, new_zobrist_code, empty_spots_left-1, current_move, alpha, beta, player, level)
-    # revert the changes for the state
-    state[current_move] = 0
-    return result
-
-def U_stone(state, zobrist_code, empty_spots_left, last_move, alpha, beta, player, level):
-    try:
-        return U_stone.cache[zobrist_code]
-    except:
-        pass
-    if i_will_win(state, last_move, player):
-        result = 1.0 if player == 1 else -1.0
-    elif level >= estimate_level:
-        result = tf_predict_u(state, zobrist_code, empty_spots_left, last_move, player)
-    else:
-        best_move, best_q = best_action_q(state, zobrist_code, empty_spots_left, last_move, alpha, beta, -player, level)
-        result = best_q
-    U_stone.cache[zobrist_code] = result
-    return result
-
-def tf_predict_u(state, zobrist_code, empty_spots_left, last_move, player):
-    "Generate the best moves, use the neural network to predict U, return the max U"
-    if empty_spots_left == 0: # Board filled up, it's a tie
-        return 0.0
-    move_interest_values = best_action_q.move_interest_values
-    move_interest_values.fill(0) # reuse the same array
-
-    next_player = -player
-    n_moves = 20
-    interested_moves = find_interesting_moves(state, empty_spots_left, move_interest_values, next_player, n_moves)
-    # make sure we solve all the hard 4 so that there're more than one interested_moves
-    next_zobrist_code = zobrist_code
-    # avoid changing the original state
-    next_state = state.copy() if len(interested_moves) == 1 else state
-    while len(interested_moves) == 1:
-        next_move = interested_moves[0]
-        next_move = (next_move[0], next_move[1])
-        # update the state
-        next_state[next_move] = next_player
-        # update the zobrist code for the new state
-        if next_player == 1:
-            move_code = strategy.zobrist_me[next_move]
-        else:
-            move_code = strategy.zobrist_opponent[next_move]
-        next_zobrist_code ^= move_code
-        empty_spots_left -= 1
-        if empty_spots_left <= 1:
-            return 0 # it's a tie
-        # check if this is a win state
-        if i_will_win(next_state, next_move, next_player):
-            result = 1.0 if next_player == 1 else -1.0
-            return result
-        # check if we learned this state before
-        try:
-            if next_player == 1:
-                return strategy.learndata[next_zobrist_code][1]
-        except KeyError:
-            pass
-        # if we reach here, it's time to go one more step
-        next_player = -next_player
-        move_interest_values.fill(0)
-        interested_moves = find_interesting_moves(next_state, empty_spots_left, move_interest_values, next_player, n_moves)
-
-    # find the known moves among interested_moves
-    tf_moves, move_zobrist_codes = [], [] # all unknown moves will be evaluated by tf_evaluate_max_u
-    max_q = -1.0
-    zobrist_map = strategy.zobrist_me if next_player == 1 else strategy.zobrist_opponent
-    learndata = strategy.learndata
-    for this_move in interested_moves:
-        this_move = (this_move[0], this_move[1])
-        this_zobrist_code = next_zobrist_code ^ zobrist_map[this_move]
-        try:
-            max_q = max(max_q, learndata[this_zobrist_code][1])
-        except KeyError:
-            try:
-                max_q = max(max_q, tf_predict_u.cache[this_zobrist_code])
-            except KeyError:
-                tf_moves.append(this_move)
-                move_zobrist_codes.append(this_zobrist_code)
-
-    # run tensorflow to evaluate all unknown moves and find the largest q
-    n_tf = len(tf_moves)
-    if n_tf > 0:
-        all_interest_states = tf_predict_u.all_interest_states[:n_tf] # we only need a slice of the big array
-        if next_player == -1: # if next is opponent
-            all_interest_states[:,:,:,0] = (next_state == -1)
-            all_interest_states[:,:,:,1] = (next_state == 1)
-            all_interest_states[:,:,:,2] = 1 if strategy.playing == 1 else 0 # if I'm white, next player is black
-        elif next_player == 1: # if next is me
-            all_interest_states[:,:,:,0] = (next_state == 1)
-            all_interest_states[:,:,:,1] = (next_state == -1)
-            all_interest_states[:,:,:,2] = 1 if strategy.playing == 0 else 0 # if I'm black, next is me so black
-        for i,current_move in enumerate(tf_moves):
-            ci, cj = current_move
-            all_interest_states[i,ci,cj,0] = 1 # put current move down
-        predict_y = tf_predict_u.model.predict(all_interest_states)
-        predict_y = np.array(predict_y).flatten()
-        #print_state(next_state)
-        #for m,y in zip(tf_moves, predict_y):
-        #     print(m,y)
-        # store the computed y
-        for zcode,y in zip(move_zobrist_codes, predict_y):
-            tf_predict_u.cache[zcode] = y    
-        tf_y = np.max(predict_y)
-        max_q = max(max_q, tf_y)
-    return max_q * next_player # if next_player is opponent, my win rate is negative of his
-
 
 @numba.jit(nopython=True, nogil=True)
 def find_interesting_moves(state, empty_spots_left, move_interest_values, player, n_moves, verbose=False):
@@ -359,6 +243,7 @@ def find_interesting_moves(state, empty_spots_left, move_interest_values, player
                         skipped_2 = i + 1
                     else:
                         break
+
                 # see if i'm winning
                 if my_line_length_back == 5:
                     # if there are 5 stones in backward counting, and it's not skipped in the middle
@@ -380,7 +265,6 @@ def find_interesting_moves(state, empty_spots_left, move_interest_values, player
                 if opponent_blocked is True:
                     if skipped_2 == 1:
                         backward_opponent_open = True
-                    skipped_2 = 0 # reset the skipped_2 here to enable the check of opponent 5 later
                 else:
                     ext_r = r
                     ext_c = c
@@ -458,6 +342,149 @@ def find_interesting_moves(state, empty_spots_left, move_interest_values, player
             for i in range(n_moves):
                 print(interested_moves[i,0],interested_moves[i,1],'  :  ', flattened_interest[high_interest_idx[i]])
         return interested_moves
+
+
+def Q_stone(state, zobrist_code, empty_spots_left, current_move, alpha, beta, player, level):
+    # update the state
+    state[current_move] = player
+    # update the zobrist code for the new state
+    if player == 1:
+        move_code = strategy.zobrist_me[current_move]
+    else:
+        move_code = strategy.zobrist_opponent[current_move]
+    new_zobrist_code = zobrist_code ^ move_code
+
+    result = U_stone(state, new_zobrist_code, empty_spots_left-1, current_move, alpha, beta, player, level)
+    # revert the changes for the state
+    state[current_move] = 0
+    return result
+
+def U_stone(state, zobrist_code, empty_spots_left, last_move, alpha, beta, player, level):
+    try:
+        return U_stone.cache[zobrist_code]
+    except:
+        pass
+
+    if i_will_win(state, last_move, player):
+        return 1.0 if player == 1 else 0.0
+    elif level >= estimate_level:
+        result = estimate_U(state, player)
+    else:
+        best_move, best_q = best_action_q(state, zobrist_code, empty_spots_left, last_move, alpha, beta, -player, level)
+        result = best_q
+
+    U_stone.cache[zobrist_code] = result
+    return result
+
+
+@numba.jit(nopython=True, nogil=True)
+def estimate_U(state, player):
+    # this function hasn't been updated from free_style to standard_rule yet
+    u = 0.0
+    my_max_n = 0
+    opponent_max_n = 0
+    for i in range(board_size):
+        for j in range(board_size):
+            # horizontal wins --
+            if j <= board_size - 5:
+                my_blocked, opponent_blocked = False, False
+                my_n, opponent_n = 0, 0
+                for k in range(5):
+                    if state[i, j+k] == -1:
+                        my_blocked = True
+                        opponent_n += 1
+                    elif state[i, j+k] == 1:
+                        opponent_blocked = True
+                        my_n += 1
+                    if my_blocked is True and opponent_blocked is True:
+                        break
+                if my_blocked is False:
+                    u += 3 ** my_n
+                    if my_n > my_max_n:
+                        my_max_n = my_n
+                if opponent_blocked is False:
+                    u -= 3 ** opponent_n
+                    if opponent_n > opponent_max_n:
+                        opponent_max_n = opponent_n
+            # vertical wins |
+            if i <= board_size - 5:
+                my_blocked, opponent_blocked = False, False
+                my_n, opponent_n = 0, 0
+                for k in range(5):
+                    if state[i+k, j] == -1:
+                        my_blocked = True
+                        opponent_n += 1
+                    elif state[i+k, j] == 1:
+                        opponent_blocked = True
+                        my_n += 1
+                    if my_blocked is True and opponent_blocked is True:
+                        break
+                if my_blocked is False:
+                    u += 3 ** my_n
+                    if my_n > my_max_n:
+                        my_max_n = my_n
+                if opponent_blocked is False:
+                    u -= 3 ** opponent_n
+                    if opponent_n > opponent_max_n:
+                        opponent_max_n = opponent_n
+            # left oblique wins /
+            if i <= board_size - 5 and j >= 4:
+                my_blocked, opponent_blocked = False, False
+                my_n, opponent_n = 0, 0
+                for k in range(5):
+                    if state[i+k, j-k] == -1:
+                        my_blocked = True
+                        opponent_n += 1
+                    elif state[i+k, j-k] == 1:
+                        opponent_blocked = True
+                        my_n += 1
+                    if my_blocked is True and opponent_blocked is True:
+                        break
+                if my_blocked is False:
+                    u += 3 ** my_n
+                    if my_n > my_max_n:
+                        my_max_n = my_n
+                if opponent_blocked is False:
+                    u -= 3 ** opponent_n
+                    if opponent_n > opponent_max_n:
+                        opponent_max_n = opponent_n
+            # right oblique wins \
+            if i <= board_size - 5 and j <= board_size - 5:
+                my_blocked, opponent_blocked = False, False
+                my_n, opponent_n = 0, 0
+                for k in range(5):
+                    if state[i+k, j+k] == -1:
+                        my_blocked = True
+                        opponent_n += 1
+                    elif state[i+k, j+k] == 1:
+                        opponent_blocked = True
+                        my_n += 1
+                    if my_blocked is True and opponent_blocked is True:
+                        break
+                if my_blocked is False:
+                    u += 3 ** my_n
+                    if my_n > my_max_n:
+                        my_max_n = my_n
+                if opponent_blocked is False:
+                    u -= 3 ** opponent_n
+                    if opponent_n > opponent_max_n:
+                        opponent_max_n = opponent_n
+    if player == 1: # next move is opponent
+        longer = 2 * (3 **opponent_max_n)  # one of the longest can get 1 longer
+        block = 3 ** my_max_n
+        u -= max(longer, block)
+    else: # next move is me
+        longer = 2 * (3 ** my_max_n)
+        block = 3 ** opponent_max_n
+        u += max(longer, block)
+
+    if u > 0:
+        result = 1.0 - 0.5 * np.exp(-u**2 * 0.0001)
+    else:
+        result = 0.5 * np.exp(-u**2 * 0.0001)
+    return result
+
+
 
 
 @numba.jit(nopython=True,nogil=True)
@@ -584,47 +611,27 @@ def i_will_win(state, last_move, player):
                 return True # two hard 4 or free 4
     return False
 
-
-
 def initialize():
     # initialize zobrist for u caching
     if not hasattr(strategy, 'zobrist_me'):
-        np.random.seed(20180104) # use the same random matrix for storing
-        strategy.zobrist_black = np.random.randint(np.iinfo(np.int64).max, size=board_size**2).reshape(board_size,board_size)
-        strategy.zobrist_white = np.random.randint(np.iinfo(np.int64).max, size=board_size**2).reshape(board_size,board_size)
-        #strategy.zobrist_code = np.random.randint(np.iinfo(np.int64).max)
-        # reset the random seed to random for other functions
-        np.random.seed()
-
+        strategy.zobrist_me = np.random.randint(np.iinfo(np.int64).max, size=board_size**2).reshape(board_size,board_size)
+    #if not hasattr(strategy, 'zobrist_opponent'):
+        strategy.zobrist_opponent = np.random.randint(np.iinfo(np.int64).max, size=board_size**2).reshape(board_size,board_size)
+    #if not hasattr(strategy, 'zobrist_code'):
+        strategy.zobrist_code = 0
+    if not hasattr(U_stone, 'cache'):
+        U_stone.cache = dict()
     if not hasattr(best_action_q, 'move_interest_values'):
         best_action_q.move_interest_values = np.zeros(board_size**2, dtype=np.float32).reshape(board_size,board_size)
 
-    if not hasattr(strategy, 'learndata'):
-        if os.path.isfile('strategy.learndata'):
-            strategy.learndata = pickle.load(open('strategy.learndata','rb'))
-            print("strategy.learndata found, loaded %d data" % len(strategy.learndata))
-        else:
-            strategy.learndata = dict()
-    strategy.started_from_beginning = False
 
-    if not hasattr(tf_predict_u, 'all_interest_states'):
-        tf_predict_u.all_interest_states = np.zeros(board_size**4 * 3, dtype=np.int8).reshape(board_size**2, board_size, board_size, 3)
-
-    if not hasattr(tf_predict_u, 'cache'):
-        if os.path.isfile('tf_predict_u.cache'):
-            tf_predict_u.cache = pickle.load(open("tf_predict_u.cache",'rb'))
-            print("tf_predict_u.cache found, loaded %d cache" % len(tf_predict_u.cache))
-        else:
-            tf_predict_u.cache = dict()
-
-    if not hasattr(tf_predict_u, 'model'):
-        tflearn.init_graph(num_cores=4, gpu_memory_fraction=0.3)
-        import construct_dnn
-        model = construct_dnn.construct_dnn()
-        path = os.path.realpath(__file__)
-        folder = os.path.dirname(path)
-        model.load(os.path.join(folder,'tf_model'))
-        tf_predict_u.model = model
+def finish():
+    del strategy.zobrist_me
+    del strategy.zobrist_opponent
+    del strategy.zobrist_code
+    del U_stone.cache
+    del best_action_q.move_interest_values
+    return
 
 def board_show(stones):
     if isinstance(stones, np.ndarray):
@@ -658,42 +665,81 @@ def print_state(state):
         print (' '.join(row))
 
 
-def test():
-    initialize()
-    state = np.zeros(board_size**2, dtype=np.int8).reshape(board_size, board_size)
-    state[(9,10,11),(11,12,13)] = 1
-    state[(6,8,9,11),(7,9,10,12)] = -1
-    lastmove = (8,9)
-    print_state(state)
-    find_interesting_moves(state, 210, best_action_q.move_interest_values, player=1, n_moves=20, verbose=True)
-
-
-def draw_state(state):
+def check():
+    global board_size
     board_size = 15
-    print(' '*4 + ' '.join([chr(97+i) for i in xrange(board_size)]))
-    print (' '*3 + '='*(2*board_size))
-    me = state[0,0,2]
-    for x in xrange(1, board_size+1):
-        row = ['%2s|'%x]
-        for y in xrange(1, board_size+1):
-            if state[x-1,y-1,0] == 1:
-                c = 'x' if me == 1 else 'o'
-            elif state[x-1,y-1,1] == 1:
-                c = 'o' if me == 1 else 'x'
-            else:
-                c = '-'
-            row.append(c)
-        print (' '.join(row))
+    state = np.zeros(board_size**2, dtype=np.int32).reshape(board_size, board_size)
+    # check if i_win() is working properly
+    state[zip(*[(8,9), (8,11), (8,8), (8,10), (8,12)])] = 1
+    assert i_win(state, (8,10), 1) == True
+    state.fill(0)
+    state[zip(*[(8,10), (9,11), (8,8), (9,12), (7,9), (10,9), (11,12), (11,13)])] = 1
+    assert i_win(state, (10,12), 1) == True
+    state.fill(0)
+    state[zip(*[(8,10), (8,12), (8,8), (9,12), (7,9), (10,9), (11,12), (11,13)])] = 1
+    assert i_win(state, (10,12), 1) == False
+    # check if i_will_win() is working properly
+    # o - x x X x - o
+    state.fill(0)
+    state[zip(*[(8,9), (8,11), (8,8)])] = 1
+    state[zip(*[(8,6), (8,13)])] = -1
+    assert i_will_win(state, (8, 10), 1) == True
+
+    #
+    state.fill(0)
+    state[zip(*[(7,7), (7,8), (9,11)])] = 1
+    state[zip(*[(6,8), (7,9)])] = -1
+    print(state)
+    assert i_will_win(state, (8,10), -1) == False
+    ## o - x x X x o
+    #assert i_will_win({(8,9), (8,11), (8,8)}, {(8,6), (8,12)}, (8,10)) == False
+    ## o - x x X o
+    ##         x
+    ##
+    ##         x
+    ##         x
+    #assert i_will_win({(8,9), (8,8), (9,10), (11,10), (12,10)}, {(8,6), (8,11)}, (8,10)) == False
+    ## o - x x X x o
+    ##         x
+    ##
+    ##         x
+    ##         x
+    #assert i_will_win({(8,9), (8,8), (9,10), (11,10), (12,10)}, {(8,6), (8,11)}, (8,10)) == False
+    ## o - x x X x o
+    ##       x
+    ##
+    ##   x
+    ## x
+    #assert i_will_win({ (8,8), (8,9), (8,11), (9,9), (11,7), (12,6)}, {(8,6), (8,12)}, (8,10)) == True
+    ## | x x x X - x x x - - o
+    #assert i_will_win({(8,1), (8,2), (8,0), (8,9), (8,7), (8,8)}, {(8,10)}, (8,3)) == False
+    ## | x x - x X x x o
+    #assert i_will_win({(8,1), (8,2), (8,4), (8,6), (8,7)}, {(8,8)}, (8,5)) == False
+    ## | x x - x X - x x o
+    #assert i_will_win({(8,1), (8,2), (8,4), (8,7), (8,8)}, {(8,9)}, (8,5)) == True
+    ## | x x x - X - x x x o
+    #assert i_will_win({(8,1), (8,2), (8,3), (8,7), (8,8), (8,9)}, {(8,10)}, (8,5)) == True
+    ## | x - x X x - x o
+    #assert i_will_win({(8,1), (8,3), (8,5), (8,7)}, {(8,8)}, (8,4)) == True
+
+    #assert i_will_win({(8,8), (8,10), (9,9), (11,7), (11,9)}, {(7,7), (7,9), (8,7), (10,8), (11,8)}, (8,9)) == False
+    print("All check passed!")
 
 if __name__ == '__main__':
-    #import pickle
-    #state = pickle.load(open('debug.state','rb'))
-    #board, last_move, playing, board_size = state
-    #player_stones = board[playing]
-    #other = int(not playing)
-    #ai_stones = board[other]
-    #player_move = (8,9)
-    #player_stones.add(player_move)
-    #state = (player_stones, ai_stones), player_move, other, board_size
-    #strategy(state)
-    test()
+    import pickle
+    state = pickle.load(open('debug.state','rb'))
+    board, last_move, playing, board_size = state
+    player_stones = board[playing]
+    other = int(not playing)
+    ai_stones = board[other]
+    player_move = (8,9)
+    player_stones.add(player_move)
+    state = (player_stones, ai_stones), player_move, other, board_size
+
+
+    strategy(state)
+    #import time
+    #check()
+    #test3()
+    #benchmark()
+    #benchmark2()
