@@ -73,7 +73,7 @@ def strategy(state):
 
 
 
-level_max_n = [20, 20, 15, 15, 8, 8, 6, 6, 4, 4, 4, 4, 4, 4, 4]
+level_max_n = [20]*20#, 20, 15, 15, 8, 8, 6, 6, 4, 4, 4, 4, 4, 4, 4]
 def best_action_q(state, zobrist_code, empty_spots_left, last_move, alpha, beta, player, level):
     "Return the optimal action for a state"
     if empty_spots_left == 0: # Board filled up, it's a tie
@@ -96,12 +96,9 @@ def best_action_q(state, zobrist_code, empty_spots_left, last_move, alpha, beta,
        is_first_move = True
        level = 0
 
-    verbose = is_first_move#True
-
+    verbose = is_first_move
     n_moves = level_max_n[level]
     interested_moves = find_interesting_moves(state, empty_spots_left, move_interest_values, player, n_moves, verbose)
-
-
 
     if len(interested_moves) == 1:
         current_move = interested_moves[0]
@@ -133,6 +130,8 @@ def best_action_q(state, zobrist_code, empty_spots_left, last_move, alpha, beta,
         for current_move in interested_moves:
             current_move = (current_move[0], current_move[1])
             q = Q_stone(state, zobrist_code, empty_spots_left, current_move, alpha, beta, player, level+1)
+            if verbose:
+                print('best_q:', current_move, q)
             if q < beta: beta = q
             if q < min_q:
                 min_q = q
@@ -204,12 +203,6 @@ def tf_predict_u(state, zobrist_code, empty_spots_left, last_move, player):
         if i_will_win(next_state, next_move, next_player):
             result = 1.0 if next_player == 1 else -1.0
             return result
-        # check if we learned this state before
-        try:
-            if next_player == 1:
-                return strategy.learndata[next_zobrist_code][1]
-        except KeyError:
-            pass
         # if we reach here, it's time to go one more step
         next_player = -next_player
         move_interest_values.fill(0)
@@ -219,18 +212,14 @@ def tf_predict_u(state, zobrist_code, empty_spots_left, last_move, player):
     tf_moves, move_zobrist_codes = [], [] # all unknown moves will be evaluated by tf_evaluate_max_u
     max_q = -1.0
     zobrist_map = strategy.zobrist_me if next_player == 1 else strategy.zobrist_opponent
-    learndata = strategy.learndata
     for this_move in interested_moves:
         this_move = (this_move[0], this_move[1])
         this_zobrist_code = next_zobrist_code ^ zobrist_map[this_move]
         try:
-            max_q = max(max_q, learndata[this_zobrist_code][1])
+            max_q = max(max_q, tf_predict_u.cache[this_zobrist_code])
         except KeyError:
-            try:
-                max_q = max(max_q, tf_predict_u.cache[this_zobrist_code])
-            except KeyError:
-                tf_moves.append(this_move)
-                move_zobrist_codes.append(this_zobrist_code)
+            tf_moves.append(this_move)
+            move_zobrist_codes.append(this_zobrist_code)
 
     # run tensorflow to evaluate all unknown moves and find the largest q
     n_tf = len(tf_moves)
@@ -249,9 +238,9 @@ def tf_predict_u(state, zobrist_code, empty_spots_left, last_move, player):
             all_interest_states[i,ci,cj,0] = 1 # put current move down
         predict_y = tf_predict_u.model.predict(all_interest_states)
         predict_y = np.array(predict_y).flatten()
-        #print_state(next_state)
-        #for m,y in zip(tf_moves, predict_y):
-        #     print(m,y)
+        #    print_state(next_state)
+        #    for m,y in zip(tf_moves, predict_y):
+        #        print(m,y)
         # store the computed y
         for zcode,y in zip(move_zobrist_codes, predict_y):
             tf_predict_u.cache[zcode] = y    
@@ -480,8 +469,6 @@ def i_win(state, last_move, player):
                 line_length += 1
             else:
                 break
-        if line_length is 5:
-            return True # 5 in a row
         # try to extend in the opposite direction
         ext_r = r
         ext_c = c
@@ -589,7 +576,7 @@ def i_will_win(state, last_move, player):
 def initialize():
     # initialize zobrist for u caching
     if not hasattr(strategy, 'zobrist_me'):
-        np.random.seed(20180104) # use the same random matrix for storing
+        np.random.seed(2018) # use the same random matrix for storing
         strategy.zobrist_black = np.random.randint(np.iinfo(np.int64).max, size=board_size**2).reshape(board_size,board_size)
         strategy.zobrist_white = np.random.randint(np.iinfo(np.int64).max, size=board_size**2).reshape(board_size,board_size)
         #strategy.zobrist_code = np.random.randint(np.iinfo(np.int64).max)

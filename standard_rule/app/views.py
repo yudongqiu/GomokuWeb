@@ -30,7 +30,7 @@ def player_set():
     action = (stone[0]+1, stone[1]+1) # we start from 1 in the game engine
     next_action, winner = game.web_play(action)
     if isinstance(next_action, tuple):
-        stone = (next_action[0]-1, next_action[1]-1)
+        stone = (int(next_action[0]-1), int(next_action[1]-1))
     else:
         stone = None
     return jsonify(next_move=stone, winner=winner)

@@ -480,8 +480,6 @@ def i_win(state, last_move, player):
                 line_length += 1
             else:
                 break
-        if line_length is 5:
-            return True # 5 in a row
         # try to extend in the opposite direction
         ext_r = r
         ext_c = c

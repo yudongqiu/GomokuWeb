@@ -13,6 +13,10 @@ The AI Level box determines the number of moves AI will predict. Currently the d
 
 To let 2 AI play against each other, put "AI" and "AI2" in the "Black" and "White" box.
 
+An DNN powered AI is added. To play against it, you need to install tensorflow and tflearn first, then enter "AI_tf" in the name textbox.
+
+It is suggested to choose AI Level 3 or smaller because the DNN evaluation is slow. But you will be surprised by the level of skills. :P
+
 If you have a new AI script, please name it starting from "AI", e.g. "AI_new.py", and put corresponding name in the box.
 
 Please Enjoy!

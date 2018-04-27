@@ -83,7 +83,6 @@
     dialog.find(".weui_btn_dialog").each(function(i, e) {
       var el = $(e);
       el.click(function() {
-        //先关闭对话框，再调用回调函数
         $.closeModal();
         if(buttons[i].onClick) {
           buttons[i].onClick();
@@ -146,12 +145,12 @@
   };
 
   defaults = $.modal.prototype.defaults = {
-    title: "提示",
+    title: "Confirm",
     text: undefined,
-    buttonOK: "确定",
-    buttonCancel: "取消",
+    buttonOK: "OK",
+    buttonCancel: "Cancel",
     buttons: [{
-      text: "确定",
+      text: "Confirm",
       className: "primary"
     }]
   };
@@ -182,7 +181,7 @@
   }
 
   $.toast = function(text) {
-    show('<i class="weui_icon_toast"></i><p class="weui_toast_content">' + (text || "已经完成") + '</p>');
+    show('<i class="weui_icon_toast"></i><p class="weui_toast_content">' + (text || "Finished") + '</p>');
 
     setTimeout(function() {
       hide();
@@ -195,7 +194,7 @@
       html += '<div class="weui_loading_leaf weui_loading_leaf_' + i + '"></div>';
     }
     html += '</div>';
-    html += '<p class="weui_toast_content">' + (text || "数据加载中") + '</p>';
+    html += '<p class="weui_toast_content">' + (text || "Loading Data") + '</p>';
     show(html, 'weui_loading_toast');
   }
 

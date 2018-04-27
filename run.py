@@ -9,6 +9,8 @@ if args.free_style:
 else:
     path = os.path.join(sys.path[0], 'standard_rule')
 sys.path.append(path)
-from app import app
+sys.path.append(os.path.join(path,'app'))
 sys.path.append(os.path.join(path,'app','AI'))
+
+from app import app
 app.run(debug=True)
